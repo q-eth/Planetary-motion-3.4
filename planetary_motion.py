@@ -2,79 +2,101 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import argrelextrema
 
-G = 6.67430e-11
-M_star_values = np.logspace(29, 31, 5)
+# Функция моделирования движения планеты
+# Здесь используется простая модель движения в центральном гравитационном поле
 
-r0 = 1.5e11 
-v0 = 3e4
-T_list = []
-a_list = []
+def simulate_orbit(m_star, r0, v0, N, dt):
+    G = 1  # Гравитационная постоянная в условных единицах
+    r = np.zeros((N, 2))
+    v = np.zeros((N, 2))
+    r[0] = r0
+    v[0] = v0
+    
+    for i in range(1, N):
+        r_mag = np.linalg.norm(r[i-1])
+        if r_mag == 0:
+            continue  # Предотвращение деления на ноль
+        a = -G * m_star * r[i-1] / r_mag**3
+        v[i] = v[i-1] + a * dt
+        r[i] = r[i-1] + v[i] * dt
+    
+    return r
 
-for M_star in M_star_values:
-    dt = 100
-    T_max = 1e8
+# Функция нахождения максимумов и минимумов расстояния
+
+def find_extrema(r):
+    r_mag = np.linalg.norm(r, axis=1)
+    if len(r_mag) == 0:
+        return np.array([]), np.array([]), [], []
+    maxima = argrelextrema(r_mag, np.greater)[0]
+    minima = argrelextrema(r_mag, np.less)[0]
+    return r_mag[maxima], r_mag[minima], maxima, minima
+
+# Функция вычисления периода
+
+def calculate_period(time, extrema_indices):
+    if len(extrema_indices) < 2:
+        return np.nan  # Если недостаточно данных
+    return np.mean(np.diff(time[extrema_indices]))
+
+# Основной код расчета
+masses = [1, 2, 5, 10]  # Различные массы звезды
+semimajor_axes = []
+periods = []
+
+time_step = 0.01
+num_steps = 10000
+
+for m in masses:
+    r0 = np.array([1, 0])
+    v0 = np.array([0, 1])
     
-    x, y = [r0], [0]
-    vx, vy = [0], [v0]
-    t = [0]
+    r = simulate_orbit(m, r0, v0, num_steps, time_step)
+    r_max, r_min, max_indices, min_indices = find_extrema(r)
+    if len(r_max) == 0 or len(r_min) == 0:
+        continue  # Пропуск некорректных данных
+    a = (np.mean(r_max) + np.mean(r_min)) / 2
+    T = calculate_period(np.arange(num_steps) * time_step, max_indices)
     
-    while t[-1] < T_max:
-        r = np.sqrt(x[-1]**2 + y[-1]**2)
-        a = -G * M_star / r**3
-        ax, ay = a * x[-1], a * y[-1]
+    if not np.isnan(T) and not np.isnan(a):
+        semimajor_axes.append(a)
+        periods.append(T)
+
+# Проверка третьего закона Кеплера (T^2 ~ a^3)
+if len(semimajor_axes) > 1 and len(periods) > 1:
+    log_a = np.log(semimajor_axes)
+    log_T = np.log(periods)
+    
+    if len(log_a) == len(log_T) and len(log_a) > 1:
+        coeffs = np.polyfit(log_a, log_T, 1)
+        keppler_slope = coeffs[0]
         
-        vx.append(vx[-1] + ax * dt)
-        vy.append(vy[-1] + ay * dt)
-        x.append(x[-1] + vx[-1] * dt)
-        y.append(y[-1] + vy[-1] * dt)
-        t.append(t[-1] + dt)
+        # Построение графика зависимости T(a)
+        plt.figure()
+        plt.scatter(log_a, log_T, label='Data')
+        plt.plot(log_a, np.polyval(coeffs, log_a), label=f'Fit (slope = {keppler_slope:.2f})', linestyle='dashed')
+        plt.xlabel('log(a)')
+        plt.ylabel('log(T)')
+        plt.legend()
+        plt.title('Зависимость периода обращения от большой полуоси')
+        plt.show()
+        
+        # Проверка зависимости T^2 / a^3 от массы звезды
+        T2_a3 = np.array(periods)**2 / np.array(semimajor_axes)**3
 
-    r_vals = np.sqrt(np.array(x)**2 + np.array(y)**2)
-    t = np.array(t) 
+        # Линейная аппроксимация данных
+        coeffs_T2_a3 = np.polyfit(masses[:len(T2_a3)], T2_a3, 1)
 
-    max_indices = argrelextrema(r_vals, np.greater, order=10)[0]
-    min_indices = argrelextrema(r_vals, np.less, order=10)[0]
-    
-    if len(max_indices) > 1 and len(min_indices) > 1:
-        r_max = np.mean(r_vals[max_indices])
-        r_min = np.mean(r_vals[min_indices])
-
-        a = (r_max + r_min) / 2
-        a_list.append(a)
-
-        max_times = t[max_indices]
-        if len(max_times) > 1:
-            T = np.mean(np.diff(max_times))
-            T_list.append(T)
-
-T_list = np.array(T_list)
-a_list = np.array(a_list)
-valid_indices = ~np.isnan(T_list)
-T_list = T_list[valid_indices]
-a_list = a_list[valid_indices]
-
-log_T = np.log(T_list)
-log_a = np.log(a_list)
-
-coeffs = np.polyfit(log_a, log_T, 1) 
-slope = coeffs[0]
-
-plt.figure()
-plt.plot(log_a, log_T, 'o', label='Данные')
-plt.plot(log_a, np.polyval(coeffs, log_a), label=f'Аппроксимация, наклон = 1,500')
-plt.xlabel('log(a)')
-plt.ylabel('log(T)')
-plt.legend()
-plt.title('Зависимость T(a) в логарифмических координатах')
-plt.show()
-
-T2_a3 = (T_list**2) / (a_list**3)
-plt.figure()
-plt.plot(M_star_values[:len(T2_a3)], T2_a3, 'o-')
-plt.xlabel('Масса звезды (кг)')
-plt.ylabel('T^2 / a^3')
-plt.title('Проверка третьего закона Кеплера')
-plt.xscale('log')
-plt.yscale('log')
-plt.show()
-
+        # Построение графика
+        plt.figure()
+        plt.plot(masses[:len(T2_a3)], T2_a3, 'o-', label='Data')  # Добавлено соединение точек
+        plt.plot(masses[:len(T2_a3)], np.polyval(coeffs_T2_a3, masses[:len(T2_a3)]), label=f'Fit (slope = {coeffs_T2_a3[0]:.2f})', linestyle='dashed')
+        plt.xlabel('Масса звезды')
+        plt.ylabel('T^2 / a^3')
+        plt.legend()
+        plt.title('Проверка третьего закона Кеплера')
+        plt.show()
+    else:
+        print('Недостаточно данных для аппроксимации полиномом.')
+else:
+    print('Недостаточно данных для анализа.')
